@@ -7,102 +7,130 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-model Job {
-  id          String   @id @default(cuid())
-  name        String
-  description String?
-  sourcePath  String
-  destPath    String
-  status      JobStatus @default(IDLE)
-  schedule    String?   // cron expression
-  lastSync    DateTime?
-  nextSync    DateTime?
-  autoSync    Boolean  @default(false)
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
-
-  torrents    Torrent[]
-  logs        SyncLog[]
-
-  @@map("jobs")
-}
-
-model Torrent {
-  id          String   @id @default(cuid())
-  jobId       String
-  name        String
-  infoHash    String   @unique
-  magnetLink  String   @db.Text
-  size        BigInt
-  progress    Float    @default(0)
-  status      TorrentStatus @default(PENDING)
-  downloadSpeed Float  @default(0)
-  uploadSpeed  Float  @default(0)
-  peers       Int      @default(0)
-  seeds       Int      @default(0)
-  filePath    String?
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
-
-  job         Job      @relation(fields: [jobId], references: [id], onDelete: Cascade)
-  files       TorrentFile[]
-
-  @@map("torrents")
-}
-
-model TorrentFile {
-  id        String @id @default(cuid())
-  torrentId String
-  name      String
-  path      String
-  size      BigInt
-  progress  Float  @default(0)
-
-  torrent   Torrent @relation(fields: [torrentId], references: [id], onDelete: Cascade)
-
-  @@map("torrent_files")
-}
-
-model SyncLog {
+model Category {
   id        String   @id @default(cuid())
-  jobId     String
-  level     LogLevel @default(INFO)
-  message   String   @db.Text
+  name      String
+  icon      String   @default("🎮")
+  color     String   @default("#6366f1")
+  sortOrder Int      @default(0)
   createdAt DateTime @default(now())
+  games     Game[]
+  @@map("categories")
+}
 
-  job       Job      @relation(fields: [jobId], references: [id], onDelete: Cascade)
+model Game {
+  id           String     @id @default(cuid())
+  name         String
+  version      String     @default("1.0.0")
+  description  String?    @db.Text
+  coverImage   String?
+  categoryId   String
+  status       GameStatus @default(ACTIVE)
+  sizeBytes    BigInt     @default(0)
+  // Server file paths
+  serverPath   String
+  // Download methods
+  magnetLink   String?    @db.Text
+  torrentFile  String?
+  ftpPath      String?
+  ftpHost      String?
+  ftpUser      String?
+  ftpPass      String?
+  // Checksums for change detection
+  checksum     String?
+  // Stats
+  downloadCount Int       @default(0)
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
 
-  @@map("sync_logs")
+  category     Category   @relation(fields: [categoryId], references: [id])
+  clientGames  ClientGame[]
+  downloadLogs DownloadLog[]
+
+  @@map("games")
+}
+
+model Client {
+  id            String       @id @default(cuid())
+  shopName      String
+  pinCode       String       // hashed
+  description   String?
+  isActive      Boolean      @default(true)
+  lastSeen      DateTime?
+  ipAddress     String?
+  // Subscription / expiry
+  expiresAt     DateTime?    // null = ไม่มีวันหมดอายุ
+  planName      String?      // ชื่อแพ็กเกจ เช่น "รายเดือน", "ราย 3 เดือน"
+  autoRenew     Boolean      @default(false)
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
+
+  clientGames    ClientGame[]
+  downloadLogs   DownloadLog[]
+  subscriptions  Subscription[]
+
+  @@map("clients")
+}
+
+model Subscription {
+  id          String   @id @default(cuid())
+  clientId    String
+  planName    String
+  daysAdded   Int
+  startedAt   DateTime @default(now())
+  expiresAt   DateTime
+  note        String?
+  createdBy   String   @default("admin")
+
+  client Client @relation(fields: [clientId], references: [id], onDelete: Cascade)
+
+  @@map("subscriptions")
+}
+
+model ClientGame {
+  id             String       @id @default(cuid())
+  clientId       String
+  gameId         String
+  localVersion   String?
+  status         SyncStatus   @default(PENDING)
+  downloadMethod DownloadMethod @default(TORRENT)
+  progress       Float        @default(0)
+  downloadSpeed  Float        @default(0)
+  lastSynced     DateTime?
+  localPath      String?
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  client   Client @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  game     Game   @relation(fields: [gameId], references: [id], onDelete: Cascade)
+
+  @@unique([clientId, gameId])
+  @@map("client_games")
+}
+
+model DownloadLog {
+  id        String         @id @default(cuid())
+  clientId  String
+  gameId    String
+  method    DownloadMethod
+  status    LogStatus      @default(INFO)
+  message   String         @db.Text
+  createdAt DateTime       @default(now())
+
+  client Client @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  game   Game   @relation(fields: [gameId], references: [id], onDelete: Cascade)
+
+  @@map("download_logs")
 }
 
 model Setting {
   id    String @id @default(cuid())
   key   String @unique
   value String @db.Text
-
   @@map("settings")
 }
 
-enum JobStatus {
-  IDLE
-  RUNNING
-  PAUSED
-  ERROR
-  COMPLETED
-}
-
-enum TorrentStatus {
-  PENDING
-  DOWNLOADING
-  SEEDING
-  PAUSED
-  ERROR
-  COMPLETED
-}
-
-enum LogLevel {
-  INFO
-  WARN
-  ERROR
-  SUCCESS
-}
+enum GameStatus   { ACTIVE MAINTENANCE DISABLED }
+enum SyncStatus   { PENDING ANALYZING DOWNLOADING PAUSED COMPLETED ERROR UP_TO_DATE }
+enum DownloadMethod { TORRENT FTP }
+enum LogStatus    { INFO SUCCESS WARN ERROR }
